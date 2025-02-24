@@ -57,6 +57,7 @@ The application supports transcription in English and Italian.
 - **Offline Transcription**: The transcription process extracts the audio (converted to WAV, 16 kHz, mono) and processes the entire file to ensure even long videos are fully transcribed.
 - **Resource Considerations**: The VOSK models can be large. The program downloads the model on the first run and reuses it afterward.
 - **The program automatically searches for a version of ffmpeg in the system path, if it is not present you must select a build (up to the bin folder) manually from the "settings" section**
+
 *Antivirus may detect some components as viruses, this may be due to pyinstaller and the fact that the program is not signed, THE PROGRAM HAS NO VIRUSES and also the source code is available here.*
 
 ## Disclaimer
