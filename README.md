@@ -33,7 +33,7 @@ This project is a Python application that downloads and transcribes YouTube (but
   Activate the environment: 
     ```bash
   venv\Scripts\activate
-- ** Install Dependencies:
+- ** Install Dependencies:**
   ```bash
   pip install -r requirements.txt
 
