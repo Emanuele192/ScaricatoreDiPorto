@@ -131,7 +131,7 @@ VOSK_MODELS = {
 class App(customtkinter.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Scaricatore di porto 2.1 - The Ganzest")
+        self.title("Scaricatore di porto 2.2 - The Ganzest")
         self.iconbitmap(icona_dir)
         self.geometry("450x600")
         self.minsize(400, 600)
@@ -151,7 +151,7 @@ class App(customtkinter.CTk):
         self.tabview.add("Settings")
         
         ###########################################
-        # --- Scheda DOWNLOAD (layout invariato) ---
+        # --- Scheda DOWNLOAD ---
         self.download_tab = self.tabview.tab("Download")
         self.download_tab.grid_columnconfigure(0, weight=1)
         self.download_tab.grid_columnconfigure(1, weight=1)
@@ -162,11 +162,17 @@ class App(customtkinter.CTk):
         )
         self.my_label.grid(row=1, column=0, columnspan=2, pady=10, sticky="n")
         
+        self.url_text = customtkinter.StringVar()
+
         self.url_bar = customtkinter.CTkEntry(
-            self.download_tab, font=my_font, placeholder_text="URL"
+            self.download_tab, font=my_font, placeholder_text="URL",
+            textvariable=self.url_text # Collega la variabile al widget
         )
         self.url_bar.grid(row=2, column=0, columnspan=2, pady=10, padx=20, sticky="ew")
-        
+
+        self.debounce_job = None
+        self.url_text.trace_add("write", self.on_url_change)
+
         self.dir_frame = customtkinter.CTkFrame(self.download_tab, fg_color="transparent")
         self.dir_frame.grid(row=3, column=0, columnspan=2, pady=10, padx=20, sticky="ew")
         self.dir_frame.grid_columnconfigure(0, weight=1)
@@ -196,14 +202,14 @@ class App(customtkinter.CTk):
         self.button_frame.grid(row=5, column=0, columnspan=2, pady=10, padx=20, sticky="ew")
         self.button_frame.grid_columnconfigure(0, weight=1)
         self.button_frame.grid_columnconfigure(1, weight=1)
-        self.button_load = customtkinter.CTkButton(
+        '''self.button_load = customtkinter.CTkButton(
             self.button_frame, text="Load", font=my_font, command=self.init_submit
         )
-        self.button_load.grid(row=0, column=0, padx=10, sticky="ew")
+        self.button_load.grid(row=0, column=0, padx=10, sticky="ew")'''
         self.clear_button = customtkinter.CTkButton(
             self.button_frame, text="Clear", command=self.clear_bar, font=my_font
         )
-        self.clear_button.grid(row=0, column=1, padx=10, sticky="ew")
+        self.clear_button.grid(row=0, column=0, columnspan = 2, padx=10, sticky="ew")
         
         self.download_button = customtkinter.CTkButton(
             self.download_tab, text="Download", font=my_font, command=self.init_download
@@ -453,7 +459,39 @@ class App(customtkinter.CTk):
         with open("config.json", "w") as file:
             json.dump(config, file, indent=4)
         print(f"Applied appearance mode: {mode}")
-    
+
+    def update_resolutions_ui(self, video_data):
+        """
+        Aggiorna in modo sicuro i widget della GUI. Ora si aspetta un dizionario
+        formattato correttamente dalla funzione submit.
+        """
+        if video_data and video_data["resolutions"]:
+            # Non impostiamo più le variabili globali qui, lo fa già get_available_resolutions.
+            
+            # Aggiorna il ComboBox
+            self.combo.configure(values=video_data["resolutions"], state="normal")
+            self.combo.set(video_data["resolutions"][0])
+            self.download_button.configure(state='normal')
+            self.error_label.configure(text="")
+        else:
+            # Gestisce il caso di errore
+            self.error_label.configure(text="Error: Could not load video info or no streams found.")
+            self.combo.configure(values=["Select Resolution"], state="normal")
+            self.combo.set("Select Resolution")
+            self.download_button.configure(state='disabled')
+
+    def on_url_change(self, *args):
+        """
+        Chiamato ogni volta che il testo nella barra URL cambia.
+        Avvia un timer per caricare le risoluzioni dopo un breve ritardo.
+        """
+        # Se c'era già un caricamento programmato, cancellalo
+        if self.debounce_job:
+            self.after_cancel(self.debounce_job)
+
+        # Se l'utente scrive di nuovo, questo verrà cancellato e riprogrammato
+        self.debounce_job = self.after(75, self.init_submit)
+
     # Se "Trim" viene attivato, forzo l'attivazione di "Encode"; se "Encode" viene disattivato, disattivo anche "Trim".
     def on_trim_change(self, *args):
         if self.trim.get():
@@ -489,8 +527,24 @@ class App(customtkinter.CTk):
         print("Cleared")
     
     def init_submit(self):
-        threading.Thread(target=submit).start()
-    
+        """
+        Chiamato dal click o dall'automazione. Prepara la GUI, legge l'URL in modo sicuro
+        e lo passa come argomento al thread di lavoro.
+        """
+        # Leggi l'URL qui, nel thread principale (sicuro)
+        url = self.url_bar.get().strip()
+        if not url:
+            return
+
+        # Fornisci un feedback visivo immediato
+        self.combo.configure(values=["Loading..."], state="disabled")
+        self.combo.set("Loading...")
+        self.download_button.configure(state='disabled')
+        self.error_label.configure(text="")
+
+        # Avvia il thread, passando l'URL come una semplice stringa
+        threading.Thread(target=submit, args=(url,)).start()
+
     def init_download(self):
         self.error_label.configure(text="")
         self.download_label.configure(text="")
@@ -574,7 +628,7 @@ def get_available_resolutions(video_url):
         'quiet': True,
         'no_warnings': True,
         'simulate': True,
-        'nocheckcertificate': True,
+        'nocheckcertificate': True, 
         'prefer_insecure': True,
         'skip_download': True,
         'outtmpl': 'dummy'
@@ -600,20 +654,32 @@ def get_available_resolutions(video_url):
     except Exception as e:
         print(f"Errore: {str(e)}")
 
-def submit():
-    try:
-        if app.audio_check.get():
-            app.combo.configure(state='disabled')
-        else:
-            app.combo.configure(state='normal')
-        url = app.url_bar.get()
-        print("URL:", url)
-        available_resolutions = get_available_resolutions(url)
-        app.combo.configure(values=available_resolutions)
-        app.download_button.configure(state='normal')
-    except Exception as e:
-        app.error_label.configure(text=f"Errore: {e}")
 
+def submit(url_string):
+    """
+    Eseguita in un thread. Riceve l'URL come una stringa,
+    chiama la funzione originale e adatta i risultati per la GUI.
+    NON tocca mai l'interfaccia direttamente.
+    """
+    video_data_for_ui = None
+    try:
+        # Usa la stringa che è stata passata, invece di accedere ad app.url_bar
+        resolutions_list = get_available_resolutions(url_string)
+
+        if resolutions_list is not None:
+            # Crea il dizionario per la UI
+            video_data_for_ui = {
+                "title": video_title,
+                "ext": video_ext,
+                "resolutions": resolutions_list
+            }
+    
+    except Exception as e:
+        print(f"Errore nel thread di submit: {e}")
+        # video_data_for_ui rimane None, segnalando un errore
+
+    # Programma l'aggiornamento della GUI sul thread principale
+    app.after(0, lambda: app.update_resolutions_ui(video_data_for_ui))
 def download_completo():
     try:
         ffmpeg_used = app.get_ffmpeg_path()
@@ -893,7 +959,7 @@ def download_audio():
 
                 # Chiama la funzione aggiornata con i nuovi argomenti
                 transcription = transcribe_file_gemini(
-                    title, 
+                    final_file_path,
                     api_key=api_key, 
                     model_name=model_name,
                     target_language=target_language,
@@ -976,32 +1042,61 @@ def extract_audio_for_transcription(video_path):
     except Exception as e:
         print(f"Error during audio extraction: {e}")
         return None
-# --- FUNZIONE DI TRASCRIZIONE CON GEMINI ---
+    
+def get_mime_type(file_path):
+    """Restituisce il MIME type basato sull'estensione del file."""
+    # Mappa delle estensioni più comuni che potresti usare
+    mime_map = {
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.opus': 'audio/opus',
+        '.ogg': 'audio/ogg', # .ogg è il contenitore per il codec opus
+        '.aac': 'audio/aac',
+        '.flac': 'audio/flac',
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mov': 'video/mov',
+    }
+    # Estrae l'estensione in minuscolo dal percorso del file
+    extension = os.path.splitext(file_path)[1].lower()
+    # Restituisce il MIME type corrispondente o None se non trovato
+    return mime_map.get(extension)
 
+# --- FUNZIONE DI TRASCRIZIONE CON GEMINI ---
 def transcribe_file_gemini(file_path, api_key, model_name, target_language, output_txt_path=None):
     """
-    Trascrive un file audio/video con Gemini. Se è un video, estrae solo l'audio
-    prima dell'upload per efficienza.
+    Trascrive un file audio/video con Gemini, gestendo l'estrazione audio
+    e specificando esplicitamente il mime_type per la massima compatibilità.
     """
-    # Determina se il file è un video (puoi aggiungere altre estensioni se necessario)
     is_video = file_path.lower().endswith(('.mp4', '.webm', '.mkv', '.mov', '.avi'))
-    
     temp_audio_path = None
     path_to_upload = file_path
 
     try:
         if is_video:
-            # Se è un video, estrai l'audio in un file temporaneo
             temp_audio_path = extract_audio_for_transcription(file_path)
             if not temp_audio_path:
                 return "Errore: impossibile estrarre l'audio dal file video."
             path_to_upload = temp_audio_path
         
-        
         genai.configure(api_key=api_key)
 
-        print(f"Uploading file: {path_to_upload}")
-        audio_file = genai.upload_file(path=path_to_upload)
+        # --- INIZIO SOLUZIONE ERRORE MIME TYPE ---
+        # Determina il mime type usando la nostra nuova funzione
+        file_mime_type = get_mime_type(path_to_upload)
+        if not file_mime_type:
+            # Se il tipo di file non è supportato, restituisci un errore chiaro
+            ext = os.path.splitext(path_to_upload)[1]
+            return f"Errore: Tipo di file non supportato per la trascrizione ({ext})."
+        
+        print(f"Uploading file: {path_to_upload} (MIME type: {file_mime_type})")
+        
+        # Passa il mime_type alla funzione di upload
+        audio_file = genai.upload_file(
+            path=path_to_upload,
+            mime_type=file_mime_type
+        )
+        # --- FINE SOLUZIONE ERRORE MIME TYPE ---
 
         while audio_file.state.name == "PROCESSING":
             print("File processing, waiting 5s...")
@@ -1027,9 +1122,8 @@ def transcribe_file_gemini(file_path, api_key, model_name, target_language, outp
 
         transcription = response.text
         
-        # Salviamo il file .txt con il nome del file originale, non quello temporaneo
         if output_txt_path is None:
-            base, _ = os.path.splitext(file_path) # Usa file_path originale qui
+            base, _ = os.path.splitext(file_path)
             output_txt_path = base + f"_gemini_{target_language}.txt"
         
         with open(output_txt_path, "w", encoding="utf-8") as f:
@@ -1043,8 +1137,6 @@ def transcribe_file_gemini(file_path, api_key, model_name, target_language, outp
         return f"Errore durante la trascrizione con Gemini: {e}"
 
     finally:
-        # --- BLOCCO DI PULIZIA ---
-        # Questo codice viene eseguito SEMPRE, anche se ci sono errori.
         if temp_audio_path and os.path.exists(temp_audio_path):
             print(f"Cleaning up temporary audio file: {temp_audio_path}")
             os.remove(temp_audio_path)
